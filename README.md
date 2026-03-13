@@ -6,6 +6,32 @@ and duty cycle. A Python GUI runs on a PC and controls the board over TCP/IP.
 
 ---
 
+## Requirements
+
+### Board
+
+| Component | Requirement |
+|-----------|-------------|
+| Hardware  | Red Pitaya STEMlab 125-14 (v1.0 or later) |
+| OS / Ecosystem | Red Pitaya ecosystem **1.04+** (Debian Linux on ARM Cortex-A9) |
+| C compiler | `gcc` with `-lrp -lm -lpthread` (pre-installed on the board) |
+| Header     | `/opt/redpitaya/include/rp.h` — provided by the ecosystem, **board only** |
+
+The C program uses `rp_GenDutyCycle`, `rp_GenPhase`, and `rp_AcqSetDecimation`,
+which are all present in ecosystem 1.04 and later.
+
+### PC (GUI)
+
+| Component | Requirement |
+|-----------|-------------|
+| Python    | **3.8 or later** |
+| Libraries | Standard library only — `tkinter`, `socket`, `threading`, `json`, `time`, `collections` |
+| OS        | Windows, macOS, or Linux |
+
+No `pip install` is needed.
+
+---
+
 ## Hardware Wiring
 
 ### Input (IN1) — TTL to ±1V voltage divider
