@@ -1,0 +1,13 @@
+# Compiled binary (built on the board, not checked in)
+rp_pll
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
