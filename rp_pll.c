@@ -379,46 +379,47 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    /* ── Startup: measure input frequency over FREQ_MEAS_BUFS buffers ── */
-    double freq_sum = 0.0;
+    /* ── Record start time and start TCP thread immediately ── */
+    long long t_start = ms_now();
+    pthread_t tcp_tid;
+    pthread_create(&tcp_tid, NULL, tcp_thread, NULL);
+
+    /* ── Startup: measure input frequency, wait indefinitely for signal ── */
+    double freq_sum  = 0.0;
     int    freq_valid = 0;
 
-    for (int b = 0; b < FREQ_MEAS_BUFS; b++) {
-        rp_AcqStart();
-        rp_AcqSetTriggerSrc(RP_TRIG_SRC_NOW);
-        rp_acq_trig_state_t state = RP_TRIG_STATE_WAITING;
-        /* Wait for buffer to fill (no more than 500ms per buffer) */
-        for (int w = 0; w < 100 && state != RP_TRIG_STATE_TRIGGERED; w++) {
-            usleep(5000);
-            rp_AcqGetTriggerState(&state);
-        }
-        uint32_t n = BUF_SIZE;
-        rp_AcqGetOldestDataV(RP_CH_1, &n, buf);
-        rp_AcqStop();
+    while (freq_valid == 0 && !atomic_load(&g_stop)) {
+        for (int b = 0; b < FREQ_MEAS_BUFS && !atomic_load(&g_stop); b++) {
+            rp_AcqStart();
+            rp_AcqSetTriggerSrc(RP_TRIG_SRC_NOW);
+            rp_acq_trig_state_t state = RP_TRIG_STATE_WAITING;
+            for (int w = 0; w < 100 && state != RP_TRIG_STATE_TRIGGERED; w++) {
+                usleep(5000);
+                rp_AcqGetTriggerState(&state);
+            }
+            uint32_t n = BUF_SIZE;
+            rp_AcqGetOldestDataV(RP_CH_1, &n, buf);
+            rp_AcqStop();
 
-        double f = measure_freq(buf, (int)n);
-        if (f > 0.0) { freq_sum += f; freq_valid++; }
+            double f = measure_freq(buf, (int)n);
+            if (f > 0.0) { freq_sum += f; freq_valid++; }
+        }
+        if (freq_valid == 0) sleep_ms(500);  /* no signal yet, keep waiting */
     }
 
-    if (freq_valid == 0) {
-        fprintf(stderr, "Could not detect input frequency on IN1\n");
+    if (atomic_load(&g_stop)) {
         free(buf);
         rp_Release();
-        return 1;
+        pthread_join(tcp_tid, NULL);
+        return 0;
     }
+
     double base_freq = freq_sum / freq_valid;
     double ema_freq  = base_freq;   /* EMA-filtered frequency estimate         */
 
     /* ── Configure output generator with initial parameters ── */
     rp_GenReset();
     output_set(base_freq, init_phase, init_duty);
-
-    /* ── Record start time ── */
-    long long t_start = ms_now();
-
-    /* ── Start TCP thread ── */
-    pthread_t tcp_tid;
-    pthread_create(&tcp_tid, NULL, tcp_thread, NULL);
 
     /* ── PI controller state ── */
     double integrator   = 0.0;
