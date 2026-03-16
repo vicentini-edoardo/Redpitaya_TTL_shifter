@@ -1,6 +1,6 @@
 CC      = gcc
 CFLAGS  = -O2 -Wall -I/boot/include/redpitaya
-LIBS    = -L/boot/lib -lrp -lm -lpthread
+LIBS    = -L/boot/lib -Wl,-rpath,/boot/lib -lrp -lm -lpthread
 TARGET  = rp_pll
 
 all: $(TARGET)
