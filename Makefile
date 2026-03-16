@@ -1,5 +1,5 @@
 CC      = gcc
-CFLAGS  = -O2 -Wall -I/opt/redpitaya/include
+CFLAGS  = -O2 -Wall -I/boot/include/redpitaya
 LIBS    = -lrp -lm -lpthread
 TARGET  = rp_pll
 

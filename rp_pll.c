@@ -5,7 +5,7 @@
  * configurable phase offset and duty cycle, and exposes a TCP server
  * for remote control from a PC GUI.
  *
- * Build:  gcc -O2 -Wall -I/opt/redpitaya/include -o rp_pll rp_pll.c -lrp -lm -lpthread
+ * Build:  gcc -O2 -Wall -I/boot/include/redpitaya -o rp_pll rp_pll.c -lrp -lm -lpthread
  * Run:    ./rp_pll [phase_deg] [duty_cycle] [tcp_port]
  *         ./rp_pll 90 0.3 5555
  */

@@ -40,7 +40,7 @@ rp_pll/
 | Output signal    | TTL-compatible square wave on OUT1 (±1V)   |
 
 The `rp.h` library is **only available on the board** at
-`/opt/redpitaya/include`. The C code **cannot be compiled on a PC**.
+`/boot/include/redpitaya`. The C code **cannot be compiled on a PC**.
 
 ---
 
@@ -52,7 +52,7 @@ The `rp.h` library is **only available on the board** at
 # On the board:
 make
 # or manually:
-gcc -O2 -Wall -I/opt/redpitaya/include -o rp_pll rp_pll.c -lrp -lm -lpthread
+gcc -O2 -Wall -I/boot/include/redpitaya -o rp_pll rp_pll.c -lrp -lm -lpthread
 ```
 
 ### Run
