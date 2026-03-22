@@ -1,220 +1,130 @@
-# Red Pitaya Software PLL
+# Red Pitaya Frequency Divider — Control GUI
 
-A software Phase-Locked Loop for the **Red Pitaya STEMlab 125-14** that locks
-an output square wave to an input TTL signal with a configurable phase offset
-and duty cycle. A Python GUI runs on a PC and controls the board over TCP/IP.
+A Python/tkinter desktop GUI to control a custom frequency divider/pulse generator implemented on the Red Pitaya FPGA (STEMlab 125-14). The FPGA core measures the period of an external input signal, divides its frequency, and outputs a configurable pulse with controllable width and phase delay.
 
----
+![GUI screenshot](GUI.png)
+
+```
+External signal ──► DIO0_P ──► [FPGA: freq divider + pulse gen] ──► DIO1_P ──► Output pulse
+                                              ▲
+                                     SSH (this GUI)
+```
+
+## Hardware
+
+- **Board:** Red Pitaya STEMlab 125-14
+- **Tested OS:** Red Pitaya OS 2.07-48
+- **FPGA clock:** 125 MHz
+- **Input:** pin `DIO0_P` / `GND` (E2 connector)
+- **Output:** pin `DIO1_P` / `GND` (E2 connector)
+- **Input frequency range:** 1 Hz – 300 kHz
+- **Divider range:** 1–32
+
+### Register map (AXI base `0x40600000`)
+
+| Offset | Register        | Description                                          |
+|--------|-----------------|------------------------------------------------------|
+| 0x00   | control         | Bit 0 = output enable, Bit 1 = soft reset            |
+| 0x04   | divider         | Frequency divider value (1–32)                       |
+| 0x08   | pulse width     | Pulse width in 125 MHz clock cycles                  |
+| 0x0C   | delay           | Pulse delay in 125 MHz clock cycles                  |
+| 0x10   | status          | Bit 0 = busy, Bit 1 = period_valid, Bit 2 = timeout  |
+| 0x14   | raw period      | Last raw measured input period (cycles)              |
+| 0x18   | filtered period | Filtered measured input period (cycles)              |
+
+Input frequency is measured directly from the hardware — no manual entry needed.
+Frequency from period: `freq_hz = 125_000_000 / period_cycles`
+
+## Repository Contents
+
+| File | Description |
+|------|-------------|
+| `redpitaya_pulse_gui_c_helper.py` | Desktop GUI — run on your PC |
+| `rp_pulse_ctl.c` | C helper binary — compiled on the board via the GUI |
+| `red_pitaya_top.bit.bin` | FPGA bitfile — download from [Releases](../../releases) and place next to the GUI script |
 
 ## Requirements
 
-### Board
+**PC:**
+- Python 3 with `tkinter` (standard library, no pip install needed)
+- OpenSSH client (`ssh`, `scp`)
+- macOS, Linux, or Windows with OpenSSH
 
-| Component | Requirement |
-|-----------|-------------|
-| Hardware  | Red Pitaya STEMlab 125-14 (v1.0 or later) |
-| OS / Ecosystem | Red Pitaya ecosystem **1.04+** (Debian Linux on ARM Cortex-A9) |
-| C compiler | `gcc` with `-lrp -lm -lpthread` (pre-installed on the board) |
-| Header     | `/boot/include/redpitaya/rp.h` — provided by the ecosystem, **board only** |
+**Red Pitaya:**
+- OS 2.07-48 (other versions may work)
+- SSH access as `root`
+- `gcc` available on the board
+- `fpgautil` at `/opt/redpitaya/bin/fpgautil`
 
-The C program uses `rp_GenDutyCycle`, `rp_GenPhase`, and `rp_AcqSetDecimation`,
-which are all present in ecosystem 1.04 and later.
+## Getting Started
 
-### PC (GUI)
+### 1. Find your board hostname
 
-| Component | Requirement |
-|-----------|-------------|
-| Python    | **3.8 or later** |
-| Libraries | Standard library only — `tkinter`, `socket`, `threading`, `json`, `time`, `collections` |
-| OS        | Windows, macOS, or Linux |
+Each Red Pitaya has a unique hostname printed on the board sticker, in the form `rp-XXXXXX.local`. You can also find it by scanning your network or connecting via the Red Pitaya web interface. Update the **Host** field in the GUI accordingly.
 
-No `pip install` is needed.
-
----
-
-## Hardware Wiring
-
-### Input (IN1) — TTL to ±1V voltage divider
-
-The Red Pitaya fast analog inputs accept ±1V. A standard 3.3V or 5V TTL signal
-must be scaled down with a resistive voltage divider before connecting to IN1.
-
-```
-TTL source ──┬── R1 ──┬── IN1
-             │        │
-             GND     R2
-                      │
-                     GND
-```
-
-| TTL level | R1    | R2    | Output at IN1 |
-|-----------|-------|-------|---------------|
-| 3.3 V     | 2.3 kΩ | 1 kΩ | ~1.0 V peak  |
-| 5.0 V     | 4.0 kΩ | 1 kΩ | ~1.0 V peak  |
-
-Connect the divider output to the SMA connector labeled **IN1** on the board.
-Also connect signal ground to the board's GND.
-
-### Output (OUT1) — level shifter note
-
-OUT1 produces a ±1V square wave (2 Vpp). Most TTL/CMOS logic expects 0–3.3V or
-0–5V. Use a single-supply comparator (e.g. LM393) or a dedicated level-shift
-IC to convert OUT1 to the required logic level.
-
----
-
-## Project Structure
-
-```
-rp_pll/
-├── rp_pll.c      # C PLL program — runs on the board
-├── Makefile      # Build on the board with gcc -lrp -lm -lpthread
-├── deploy.sh     # Copy + compile on board via scp/ssh
-├── gui/
-│   └── rp_gui.py # Python 3 GUI — runs on PC
-└── README.md
-```
-
----
-
-## Deploying to the Board
+### 2. Run the GUI
 
 ```bash
-./deploy.sh rp-xxxxxx.local
-# or with IP address:
-./deploy.sh 192.168.1.50
+python3 redpitaya_pulse_gui_c_helper.py
 ```
 
-The script:
-1. Creates `/root/rp_pll/` on the board.
-2. Copies `rp_pll.c` and `Makefile` via `scp`.
-3. Runs `make` on the board via `ssh`.
+### 3. First-time setup
 
-> **Note:** `rp.h` is only available on the board. Do not attempt to compile
-> `rp_pll.c` on a PC.
+If the C helper binary is not yet on the board, click **Upload & compile** — this copies `rp_pulse_ctl.c` via SCP and compiles it on the board with `gcc`.
 
----
+If the FPGA bitfile needs updating, click **Upload bitfile** — this copies `red_pitaya_top.bit.bin` via SCP and reloads the FPGA with `fpgautil`.
 
-## Running the C Program on the Board
+### 4. Connect
 
-SSH into the board and run:
+Enter your board hostname and click **Connect**. This will:
+1. Load the FPGA bitfile via `fpgautil`
+2. Read back the current register state
 
-```bash
-cd /root/rp_pll
-./rp_pll [phase_deg] [duty_cycle] [tcp_port]
+Port, user, and base address can be changed under **▼ Advanced**.
+
+### 5. Control parameters
+
+| Parameter | Unit | Description |
+|-----------|------|-------------|
+| Divider   | integer 1–32  | Divides the input frequency |
+| Width     | duty cycle 0–1 | Pulse width as fraction of the **input** period |
+| Delay     | phase 0–180°  | Pulse delay as phase of the **input** period |
+
+The muted label next to each slider shows the equivalent absolute time (e.g. `4 us`).
+
+The input frequency is read automatically from hardware and updated when it changes by more than 5%. Use **Force freq update** to apply the current hardware measurement immediately. A red warning is shown if no input signal is detected.
+
+### 6. Apply changes
+
+| Button / control | Action |
+|-----------------|--------|
+| **Apply now** | Sends current values to hardware immediately |
+| **Auto apply** | Sends values 300 ms after any slider/entry change |
+| **Read registers** | Reads back hardware state without writing |
+| **Soft reset** | Pulses the reset bit on the FPGA core |
+
+## Architecture
+
+```
+redpitaya_pulse_gui_c_helper.py
+├── RemoteCtl               SSH/SCP transport layer
+│   ├── run()               Execute a command on the board via SSH
+│   ├── helper()            Call rp_pulse_ctl and parse JSON response
+│   ├── upload_and_compile()  SCP rp_pulse_ctl.c + gcc on board
+│   └── upload_bitfile()    SCP bitfile + fpgautil reload
+└── App                     tkinter GUI
+    ├── _build_connection()   Connection panel + upload buttons
+    ├── _build_controls()     Divider / Width / Delay sliders
+    ├── _build_readback()     Register readback display
+    ├── _update_readback()    Parses hardware JSON, updates all labels
+    ├── _start_poll()         2 s periodic register poll
+    └── apply_now()           Converts GUI units → cycles → hardware write
 ```
 
-| Argument    | Default | Description                                |
-|-------------|---------|--------------------------------------------|
-| phase_deg   | 0       | Initial phase offset in degrees (−360–360) |
-| duty_cycle  | 0.5     | Initial duty cycle (0.01–0.99)             |
-| tcp_port    | 5555    | TCP port for the remote control server     |
+**Unit conversions** (all referenced to the input period, not the divided period):
+- Width: `duty × input_period_cycles` → hardware cycles
+- Delay: `(deg / 360) × input_period_cycles` → hardware cycles, clamped to half period
 
-Example — 90° phase shift, 30% duty, default port:
+## License
 
-```bash
-./rp_pll 90 0.3 5555
-```
-
-The program outputs nothing to stdout under normal operation. Errors go to
-stderr. Stop with `Ctrl+C` or send the `STOP` TCP command.
-
----
-
-## Running the Python GUI on the PC
-
-```bash
-python3 gui/rp_gui.py
-```
-
-1. Enter the board's IP address (or hostname) and port.
-2. Click **Connect**.
-3. Adjust the **Phase Shift** and **Duty Cycle** sliders.
-4. Watch live readouts and the rolling phase-error chart.
-
-The GUI uses only the Python standard library (tkinter). No `pip install`
-required. Works on Windows, macOS, and Linux.
-
----
-
-## TCP Protocol Reference
-
-The board listens for plain-text, newline-terminated commands on the configured
-TCP port (default 5555). One client is served at a time; the board waits for a
-new client if the connection drops.
-
-### Commands (PC → board)
-
-| Command               | Description                                    |
-|-----------------------|------------------------------------------------|
-| `SET_PHASE <degrees>` | Set phase offset. Range: −360 to +360.         |
-| `SET_DUTY <0.0-1.0>`  | Set duty cycle. Range: 0.01 to 0.99.           |
-| `GET_STATUS`          | Request an immediate STATUS response.          |
-| `STOP`                | Stop the PLL and exit the program cleanly.     |
-
-### Responses (board → PC)
-
-| Response         | Description                                         |
-|------------------|-----------------------------------------------------|
-| `OK`             | Command accepted.                                   |
-| `ERR <message>`  | Command rejected; reason in message.                |
-| `STATUS <json>`  | Pushed automatically every 100 ms, and on request. |
-
-### Status JSON
-
-```json
-{
-  "freq":          15000.12,
-  "phase_target":  90.0,
-  "phase_applied": 89.8,
-  "phase_error":   0.2,
-  "duty":          0.3,
-  "locked":        true,
-  "uptime_s":      42
-}
-```
-
-| Field           | Type    | Description                                          |
-|-----------------|---------|------------------------------------------------------|
-| freq            | float   | EMA-filtered input frequency (Hz)                   |
-| phase_target    | float   | Requested phase offset (°)                           |
-| phase_applied   | float   | Current output phase (°), converges to target        |
-| phase_error     | float   | `target − applied`, wrapped to [−180, +180] (°)      |
-| duty            | float   | Current duty cycle (0–1)                             |
-| locked          | bool    | `true` if rising edges were detected in last buffer  |
-| uptime_s        | integer | Seconds since PLL started                            |
-
----
-
-## PLL Tuning Guide
-
-The PI controller runs in the main acquisition loop (every 5 ms). Default
-constants are in `rp_pll.c`:
-
-| Constant         | Default | Effect                                              |
-|------------------|---------|-----------------------------------------------------|
-| `KP`             | 0.3     | Proportional gain — speed of initial response       |
-| `KI`             | 0.01    | Integral gain — eliminates steady-state phase error |
-| `WINDUP_CLAMP`   | 45°     | Integrator clamp — prevents integral wind-up        |
-| `EMA_ALPHA`      | 0.05    | Frequency pre-filter — smooths noisy freq estimate  |
-
-### If the phase oscillates (hunting)
-
-Reduce `KP` (e.g. 0.1). The loop is over-damped. Optionally increase
-`WINDUP_CLAMP` slightly if the integrator saturates too early.
-
-### If phase converges slowly or drifts
-
-Increase `KI` (e.g. 0.05). If `KI` is increased significantly, also reduce
-`WINDUP_CLAMP` proportionally to avoid integral wind-up on large step changes.
-
-### If the frequency readout is noisy
-
-Decrease `EMA_ALPHA` (e.g. 0.01) for more smoothing, at the cost of slower
-response to actual frequency changes.
-
-### Lock indicator is `false` intermittently
-
-The signal level may be too low after the voltage divider. Check that the peak
-voltage reaching IN1 comfortably exceeds the `THRESHOLD_V` constant (0.1 V).
-Adjust the divider ratio or change `THRESHOLD_V`.
+MIT — see [LICENSE](LICENSE).

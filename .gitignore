@@ -1,13 +1,6 @@
-# Compiled binary (built on the board, not checked in)
-rp_pll
-
-# Python
+VIVADO/
 __pycache__/
 *.pyc
-*.pyo
-
-# Editor / OS noise
+*.bin
+*.bit.bin
 .DS_Store
-Thumbs.db
-*.swp
-*.swo
