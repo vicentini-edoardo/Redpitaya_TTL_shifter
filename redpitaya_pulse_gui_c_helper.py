@@ -86,6 +86,33 @@ def cycles_to_deg(cycles: int, period_cycles: int) -> float:
     return (cycles / period_cycles) * 360.0 if period_cycles > 0 else 0.0
 
 
+class _Tooltip:
+    """Simple hover tooltip for any tkinter widget."""
+    def __init__(self, widget, text):
+        self._widget = widget
+        self._text   = text
+        self._tw     = None
+        widget.bind("<Enter>", self._show, add="+")
+        widget.bind("<Leave>", self._hide, add="+")
+
+    def _show(self, _event=None):
+        if self._tw:
+            return
+        x = self._widget.winfo_rootx() + self._widget.winfo_width() // 2
+        y = self._widget.winfo_rooty() + self._widget.winfo_height() + 4
+        self._tw = tw = tk.Toplevel(self._widget)
+        tw.wm_overrideredirect(True)
+        tw.wm_geometry(f"+{x}+{y}")
+        tk.Label(tw, text=self._text, bg="#2e2e3e", fg=CLR_TEXT,
+                 relief="flat", borderwidth=1, font=("", 9),
+                 padx=6, pady=3).pack()
+
+    def _hide(self, _event=None):
+        if self._tw:
+            self._tw.destroy()
+            self._tw = None
+
+
 class RemoteCtl:
     def __init__(self):
         self.host = ""
@@ -191,8 +218,10 @@ class App:
         self.info_text = tk.StringVar(value="Connect to read input frequency from hardware.")
         self.readback_text = tk.StringVar(value="No register readback yet.")
         self.freq_warning_text = tk.StringVar(value="")
+        self._conn_dot = None   # tk.Label used as a colored status indicator
 
         self._build()
+        self.root.bind("<Control-Return>", lambda e: self.apply_now())
 
     # ── Styles ────────────────────────────────────────────────────────────────
 
@@ -272,6 +301,7 @@ class App:
 
         self._build_connection(outer)
         self._build_controls(outer)
+        self._build_waveform(outer)
         self._build_readback(outer)
 
     def _build_connection(self, outer):
@@ -281,19 +311,39 @@ class App:
         ttk.Label(conn, text="Host").grid(row=0, column=0, sticky="w", padx=(0, 4))
         ttk.Entry(conn, textvariable=self.host_var, width=20).grid(row=0, column=1, sticky="w", padx=(0, 10))
 
-        ttk.Button(conn, text="Connect",      command=self.connect).grid(row=0, column=2, padx=3)
-        ttk.Button(conn, text="Read back",    command=self.read_back).grid(row=0, column=3, padx=3)
-        ttk.Button(conn, text="Soft reset",   command=self.soft_reset).grid(row=0, column=4, padx=3)
-        ttk.Button(conn, text="Upload & compile", command=self.upload_and_compile).grid(row=0, column=5, padx=3)
-        ttk.Button(conn, text="Upload bitfile",   command=self.upload_bitfile).grid(row=1, column=2, columnspan=2, padx=3, pady=(6,0), sticky="w")
+        btn_connect = ttk.Button(conn, text="Connect",      command=self.connect)
+        btn_connect.grid(row=0, column=2, padx=3)
+        _Tooltip(btn_connect, "SSH-connect and load FPGA bitstream")
+
+        btn_rb = ttk.Button(conn, text="Read back", command=self.read_back)
+        btn_rb.grid(row=0, column=3, padx=3)
+        _Tooltip(btn_rb, "Read current register values from hardware")
+
+        btn_sr = ttk.Button(conn, text="Soft reset", command=self.soft_reset)
+        btn_sr.grid(row=0, column=4, padx=3)
+        _Tooltip(btn_sr, "Send a soft-reset pulse to the FPGA core")
+
+        btn_uc = ttk.Button(conn, text="Upload & compile", command=self.upload_and_compile)
+        btn_uc.grid(row=0, column=5, padx=3)
+        _Tooltip(btn_uc, "SCP rp_pulse_ctl.c to the board and compile it")
+
+        btn_ub = ttk.Button(conn, text="Upload bitfile", command=self.upload_bitfile)
+        btn_ub.grid(row=1, column=2, columnspan=2, padx=3, pady=(6, 0), sticky="w")
+        _Tooltip(btn_ub, "Upload red_pitaya_top.bit.bin and reprogram the FPGA")
+
         ttk.Checkbutton(conn, text="Auto apply", variable=self.auto_apply_var).grid(row=0, column=6, padx=(10, 0))
 
         self._adv_toggle_btn = ttk.Button(conn, text="▼ Advanced", command=self._toggle_advanced)
         self._adv_toggle_btn.grid(row=0, column=7, padx=(10, 0), sticky="e")
         conn.grid_columnconfigure(7, weight=1)
 
-        ttk.Label(conn, textvariable=self.status_text, style="Status.TLabel").grid(
-            row=1, column=0, columnspan=8, sticky="w", pady=(8, 0))
+        status_row = ttk.Frame(conn, style="Surface.TFrame")
+        status_row.grid(row=1, column=0, columnspan=8, sticky="w", pady=(8, 0))
+        self._conn_dot = tk.Label(status_row, text="●", fg=CLR_WARN,
+                                  bg=CLR_SURFACE, font=("", 11))
+        self._conn_dot.pack(side="left", padx=(0, 6))
+        ttk.Label(status_row, textvariable=self.status_text,
+                  style="Status.TLabel").pack(side="left")
 
         ttk.Label(conn, textvariable=self.info_text, style="Info.TLabel", justify="left").grid(
             row=2, column=0, columnspan=7, sticky="w", pady=(4, 0))
@@ -343,7 +393,7 @@ class App:
                             scale_attr="divider_scale")
 
         self._add_param_row(ctrl, 1,
-                            label="Width (duty 0–1)",
+                            label="Width (duty cycle)",
                             float_var=self.width_frac_var, int_var=None,
                             entry_var=self.width_frac_entry_var,
                             minv=0.0, maxv=1.0,
@@ -365,8 +415,10 @@ class App:
 
         ttk.Checkbutton(btn_frame, text="Enable output", variable=self.enable_var,
                         command=self.maybe_auto_apply).pack(side="left", padx=(0, 12))
-        ttk.Button(btn_frame, text="Apply now", command=self.apply_now,
-                   style="Accent.TButton").pack(side="left", padx=(0, 6))
+        btn_apply = ttk.Button(btn_frame, text="Apply now (Ctrl+↵)",
+                               command=self.apply_now, style="Accent.TButton")
+        btn_apply.pack(side="left", padx=(0, 6))
+        _Tooltip(btn_apply, "Write divider/width/delay to hardware (Ctrl+Enter)")
         ttk.Button(btn_frame, text="Read registers", command=self.read_back).pack(side="left")
 
     def _add_param_row(self, parent, row, label, float_var, int_var,
@@ -387,11 +439,84 @@ class App:
         entry.bind("<FocusOut>", lambda e, cb=callback: cb(None))
 
         if ns_var is not None:
-            ttk.Label(parent, textvariable=ns_var, style="Muted.TLabel", width=12).grid(
+            ttk.Label(parent, textvariable=ns_var, style="Muted.TLabel", width=18).grid(
                 row=row, column=3, sticky="w", pady=(6, 0))
 
         setattr(self, scale_attr, scale)
         scale.set(var.get())
+
+    def _build_waveform(self, outer):
+        wf = ttk.LabelFrame(outer, text="Waveform Preview", padding=10)
+        wf.pack(fill="x", pady=(0, 10))
+        self._wf_canvas = tk.Canvas(wf, height=90, bg=CLR_BG, highlightthickness=0)
+        self._wf_canvas.pack(fill="x", expand=True)
+        self._wf_canvas.bind("<Configure>", lambda e: self._draw_waveform())
+
+    def _draw_waveform(self):
+        c = self._wf_canvas
+        c.delete("all")
+        cw = c.winfo_width()
+        ch = c.winfo_height()
+        if cw < 20 or ch < 20:
+            return
+
+        margin_l = 52
+        margin_r = 10
+        tw = cw - margin_l - margin_r  # track width in pixels
+
+        # Two horizontal tracks
+        y_in_hi  = 8;  y_in_lo  = 26
+        y_out_hi = 52; y_out_lo = 78
+
+        def _label(text, y_hi, y_lo, color):
+            c.create_text(margin_l - 4, (y_hi + y_lo) // 2,
+                          text=text, anchor="e", fill=color, font=("", 8))
+
+        _label("In",  y_in_hi,  y_in_lo,  CLR_MUTED)
+        _label("Out", y_out_hi, y_out_lo, CLR_ACCENT)
+
+        divider = max(1, self.divider_var.get())
+        frac    = max(0.001, min(0.999, self.width_frac_var.get()))
+        deg     = max(0.0,   min(180.0, self.delay_deg_var.get()))
+        delay_frac = deg / 360.0
+
+        # ── Input: show 2 × divider cycles at 50 % duty ────────────────────
+        n_in   = divider * 2
+        in_pw  = tw / n_in
+        x = float(margin_l)
+        for _ in range(n_in):
+            mid = x + in_pw / 2
+            pts = [x, y_in_lo, x, y_in_hi, mid, y_in_hi,
+                   mid, y_in_lo, x + in_pw, y_in_lo]
+            for i in range(0, len(pts) - 2, 2):
+                c.create_line(pts[i], pts[i+1], pts[i+2], pts[i+3],
+                              fill=CLR_MUTED, width=1)
+            x += in_pw
+
+        # ── Output: show 2 output cycles ───────────────────────────────────
+        out_pw = tw / 2.0
+        x = float(margin_l)
+        for _ in range(2):
+            d_px = out_pw * delay_frac
+            h_px = out_pw * frac
+            # low → delay → rising → high → falling → low
+            pts = [
+                x,             y_out_lo,
+                x + d_px,      y_out_lo,
+                x + d_px,      y_out_hi,
+                x + d_px + h_px, y_out_hi,
+                x + d_px + h_px, y_out_lo,
+                x + out_pw,    y_out_lo,
+            ]
+            for i in range(0, len(pts) - 2, 2):
+                c.create_line(pts[i], pts[i+1], pts[i+2], pts[i+3],
+                              fill=CLR_ACCENT, width=2)
+            x += out_pw
+
+        # ── Annotations ────────────────────────────────────────────────────
+        c.create_text(margin_l + tw / 2, ch - 4,
+                      text=f"÷{divider}  |  duty {frac*100:.1f}%  |  delay {deg:.1f}°",
+                      fill=CLR_MUTED, font=("", 8))
 
     def _build_readback(self, outer):
         rb = ttk.LabelFrame(outer, text="Readback", padding=10)
@@ -401,6 +526,16 @@ class App:
 
     # ── Connection ────────────────────────────────────────────────────────────
 
+    def _set_connected(self, connected: bool):
+        self.connected = connected
+        if self._conn_dot:
+            self._conn_dot.config(fg=CLR_SUCCESS if connected else CLR_WARN)
+        host = self.host_var.get().strip()
+        self.root.title(
+            f"Red Pitaya Pulse Control — {host}" if connected
+            else "Red Pitaya Pulse Control"
+        )
+
     def connect(self):
         try:
             host = self.host_var.get().strip()
@@ -408,7 +543,7 @@ class App:
             port = int(self.port_var.get().strip())
             self.base_addr = int(self.base_var.get().replace("_", ""), 0)
             self.remote.connect(host, user, port)
-            self.connected = True
+            self._set_connected(True)
             self.status_text.set("Loading FPGA bitstream…")
             self.root.update_idletasks()
             self.remote.run(f"{REMOTE_FPGAUTIL} -b {REMOTE_BITFILE}")
@@ -416,7 +551,7 @@ class App:
             self.read_back()
             self._start_poll()
         except Exception as exc:
-            self.connected = False
+            self._set_connected(False)
             messagebox.showerror("Connection error", str(exc))
             self.status_text.set("Connection failed.")
 
@@ -515,6 +650,7 @@ class App:
         self.divider_scale.set(new_val)
         self.updating_widgets = False
         self._update_info_text()
+        self._draw_waveform()
         self.maybe_auto_apply()
 
     def on_width_change(self, value):
@@ -533,8 +669,9 @@ class App:
         self.width_frac_entry_var.set(f"{new_val:.3f}")
         self.width_scale.set(new_val)
         w_cyc = frac_to_cycles(new_val, self._period_cycles)
-        self.width_ns_var.set(fmt_time_s(w_cyc / CLOCK_HZ))
+        self.width_ns_var.set(f"{new_val*100:.1f}%  {fmt_time_s(w_cyc / CLOCK_HZ)}")
         self.updating_widgets = False
+        self._draw_waveform()
         self.maybe_auto_apply()
 
     def on_delay_change(self, value):
@@ -555,6 +692,7 @@ class App:
         d_cyc = deg_to_cycles(new_val, self._period_cycles)
         self.delay_ns_var.set(fmt_time_s(d_cyc / CLOCK_HZ))
         self.updating_widgets = False
+        self._draw_waveform()
         self.maybe_auto_apply()
 
     # ── Hardware ops ──────────────────────────────────────────────────────────
@@ -636,8 +774,9 @@ class App:
                 self._force_period_update = False
                 self._period_cycles = filt_period
                 self._update_info_text()
-                self.width_ns_var.set(fmt_time_s(
-                    frac_to_cycles(self.width_frac_var.get(), filt_period) / CLOCK_HZ))
+                frac = self.width_frac_var.get()
+                w_cyc = frac_to_cycles(frac, filt_period)
+                self.width_ns_var.set(f"{frac*100:.1f}%  {fmt_time_s(w_cyc / CLOCK_HZ)}")
                 self.delay_ns_var.set(fmt_time_s(
                     deg_to_cycles(self.delay_deg_var.get(), filt_period) / CLOCK_HZ))
 
