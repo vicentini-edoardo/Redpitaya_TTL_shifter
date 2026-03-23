@@ -4,3 +4,4 @@ __pycache__/
 *.bin
 *.bit.bin
 .DS_Store
+gui.log

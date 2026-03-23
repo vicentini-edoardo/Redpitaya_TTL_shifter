@@ -37,9 +37,9 @@ CLR_ACCENT2    = "#b000ff"   # Electric violet — duty cycle tile
 CLR_SUCCESS    = "#00ff9f"   # Neon green — connected/output freq
 CLR_WARN       = "#ff2d55"   # Hot pink — warnings/disconnected
 CLR_TEXT       = "#e0f0ff"   # Cool white — primary text
-CLR_MUTED      = "#3a5068"   # Steel blue-grey — secondary/INPUT wave
+CLR_MUTED      = "#8aa6c1"   # Brighter steel blue-grey — secondary labels/INPUT wave
 CLR_ENTRY_BG   = "#0a1520"   # Entry field background
-CLR_GRID       = "#0a1e2a"   # Waveform canvas grid lines
+CLR_GRID       = "#183445"   # Brighter grid lines for dark background
 CLR_STAT_BG    = "#060d14"   # Big stats tile background
 
 
@@ -312,14 +312,23 @@ class App:
     def _make_cyber_frame(self, parent, title, padding=12):
         """Create a frame with corner bracket decorations."""
         outer = tk.Frame(parent, bg=CLR_SURFACE, bd=0)
+        outer.grid_columnconfigure(0, weight=1)
+        outer.grid_rowconfigure(1, weight=1)
+
         c = tk.Canvas(outer, bg=CLR_SURFACE, highlightthickness=0)
         c.place(x=0, y=0, relwidth=1, relheight=1)
         c.bind("<Configure>", lambda e, cv=c: self._redraw_bracket(cv))
-        tk.Label(outer, text=title, bg=CLR_SURFACE,
-                 fg=CLR_ACCENT, font=self._font_label).place(x=14, y=2, anchor="w")
+
+        tk.Label(
+            outer,
+            text=title,
+            bg=CLR_SURFACE,
+            fg=CLR_ACCENT,
+            font=self._font_label,
+        ).grid(row=0, column=0, sticky="w", padx=14, pady=(2, 0))
+
         inner = tk.Frame(outer, bg=CLR_SURFACE, bd=0)
-        inner.place(x=padding, y=20, relwidth=1, relheight=1,
-                    width=-2*padding, height=-(20+padding))
+        inner.grid(row=1, column=0, sticky="nsew", padx=padding, pady=(8, padding))
         return outer, inner
 
     def _redraw_bracket(self, canvas):
@@ -573,9 +582,10 @@ class App:
         deg     = max(0.0,   min(180.0, self.delay_deg_var.get()))
         delay_frac = deg / 360.0
 
-        # ── Input: show 2 × divider cycles at 50 % duty ────────────────────
-        n_in   = divider * 2
-        in_pw  = tw / n_in
+        # Keep a fixed time window of 32 input-clock periods so divider
+        # changes are visible on the slower output waveform.
+        n_in = 32
+        in_pw = tw / n_in
         x = float(margin_l)
         for _ in range(n_in):
             mid = x + in_pw / 2
@@ -586,10 +596,11 @@ class App:
                               fill=CLR_MUTED, width=1)
             x += in_pw
 
-        # ── Output: show 2 output cycles with glow effect ─────────────────
-        out_pw = tw / 2.0
+        # ── Output: same time window, divided period/duty/phase applied ───
+        out_pw = in_pw * divider
+        n_out = max(1, int(n_in / divider))
         x = float(margin_l)
-        for _ in range(2):
+        for _ in range(n_out):
             d_px = out_pw * delay_frac
             h_px = out_pw * frac
             # low → delay → rising → high → falling → low
@@ -616,9 +627,9 @@ class App:
         c.create_line(margin_l, sep_y, margin_l + tw, sep_y,
                       fill=CLR_GRID, width=1)
 
-        out_duty = (frac / divider) * 100
+        in_ref_duty = frac * 100
         c.create_text(margin_l + tw / 2, ch - 8,
-                      text=f"÷{divider}  |  out duty {out_duty:.1f}%  |  delay {deg:.1f}°",
+                      text=f"÷{divider}  |  duty {in_ref_duty:.1f}% of input period  |  delay {deg:.1f}°",
                       fill=CLR_TEXT, font=("", 9))
 
     def _build_readback(self, outer):
@@ -757,7 +768,7 @@ class App:
         self._update_info_text()
         # Update stat duty cycle
         div = max(1, new_val)
-        self.stat_duty_var.set(f"{(self.width_frac_var.get() / div) * 100:.1f} %")
+        self.stat_duty_var.set(f"{self.width_frac_var.get() * 100:.1f} %")
         self._draw_waveform()
         self.maybe_auto_apply()
 
@@ -779,8 +790,7 @@ class App:
         w_cyc = frac_to_cycles(new_val, self._period_cycles)
         self.width_ns_var.set(f"{new_val*100:.1f}%  {fmt_time_s(w_cyc / CLOCK_HZ)}")
         # Update stat duty cycle
-        div = max(1, self.divider_var.get())
-        self.stat_duty_var.set(f"{(new_val / div) * 100:.1f} %")
+        self.stat_duty_var.set(f"{new_val * 100:.1f} %")
         self.updating_widgets = False
         self._draw_waveform()
         self.maybe_auto_apply()
@@ -902,7 +912,7 @@ class App:
         self.stat_input_freq_var.set(fmt_freq_hz(filt_freq) if filt_period > 0 else "—")
         self.stat_output_freq_var.set(fmt_freq_hz(out_freq)  if filt_period > 0 else "—")
         frac = self.width_frac_var.get()
-        self.stat_duty_var.set(f"{(frac / divider_hw) * 100:.1f} %")
+        self.stat_duty_var.set(f"{frac * 100:.1f} %")
         self.stat_phase_var.set(f"{self.delay_deg_var.get():.1f} °")
 
         width_frac = cycles_to_frac(width, self._period_cycles)
