@@ -2,14 +2,16 @@
 
 ## Project Overview
 
-This repository contains a desktop GUI for controlling a custom Red Pitaya FPGA
+This repository contains desktop GUIs for controlling a custom Red Pitaya FPGA
 frequency divider / pulse generator over SSH.
 
 Current active components:
 
-1. `redpitaya_pulse_gui_c_helper.py` — Python/tkinter desktop GUI that runs on
-   the host PC.
-2. `rp_pulse_ctl.c` — small C helper uploaded to the Red Pitaya and compiled on
+1. `redpitaya_pulse_gui_qt.py` — preferred Python/PySide6 desktop GUI that runs
+   on the host PC.
+2. `redpitaya_pulse_gui_c_helper.py` — legacy Tkinter fallback GUI kept during
+   the migration.
+3. `rp_pulse_ctl.c` — small C helper uploaded to the Red Pitaya and compiled on
    the board; it reads and writes FPGA registers through `/dev/mem`.
 
 The legacy PLL implementation and its older GUIs have been removed from this
@@ -24,6 +26,7 @@ Redpitaya_TTL_shifter/
 ├── GUI.png
 ├── LICENSE
 ├── README.md
+├── redpitaya_pulse_gui_qt.py
 ├── redpitaya_pulse_gui_c_helper.py
 └── rp_pulse_ctl.c
 ```
@@ -38,23 +41,29 @@ Redpitaya_TTL_shifter/
 
 ## Main Files
 
-### `redpitaya_pulse_gui_c_helper.py`
+### `redpitaya_pulse_gui_qt.py`
 
-Key responsibilities:
+Preferred GUI entrypoint. Key responsibilities:
 
-- Build the tkinter GUI
+- Build the PySide6 dashboard
+- Keep backend SSH/SCP calls off the GUI thread
 - Show live frequency / duty / phase stats
 - Draw the waveform preview
 - Upload the FPGA bitfile
 - Upload and compile `rp_pulse_ctl.c`
 - Read and write hardware registers over SSH
 
-Important sections:
+Key sections:
 
-- `RemoteCtl` handles SSH/SCP transport.
-- `App._build_*` creates the GUI panels.
-- `App._draw_waveform()` renders the preview.
-- `App._update_readback()` converts hardware values into UI state.
+- `MainWindow` handles composition and state
+- `CyberPanel`, `StatCard`, `DividerControl`, `ParameterSlider`, and
+  `WaveformPreview` implement the custom UI layer
+- `FunctionWorker` and `QThreadPool` handle async backend work
+
+### `redpitaya_pulse_gui_c_helper.py`
+
+Legacy fallback implementation. Do not treat it as the preferred surface unless
+the user explicitly asks to work on the Tkinter version.
 
 ### `rp_pulse_ctl.c`
 
@@ -70,10 +79,10 @@ This file is intended to compile on the Red Pitaya, not on the local machine.
 
 ### Python GUI
 
-- Keep dependencies in the Python standard library only.
-- Preserve cross-platform tkinter compatibility.
-- All GUI updates must happen on the tkinter main thread.
-- Prefer small, localized edits; this is a single-file GUI.
+- Prefer the PySide6 app for new GUI work.
+- Keep the Qt UI responsive by moving SSH/SCP/readback/polling work off the GUI thread.
+- Preserve cross-platform desktop behavior on macOS, Linux, and Windows.
+- Keep the backend semantics identical between the Qt and Tk apps.
 - When changing the preview, keep width and delay referenced to the input
   period unless the user requests otherwise.
 
@@ -88,7 +97,7 @@ This file is intended to compile on the Red Pitaya, not on the local machine.
 
 - Do not re-add PLL-era files (`rp_pll.c`, old `gui/` scripts, old `deploy.sh`)
   unless explicitly requested.
-- Do not add external Python packages for the GUI.
+- Do not introduce non-Qt GUI packages for the new app.
 - Do not change width/delay semantics away from input-period references unless
   the user asks for that behavior.
 - Do not commit generated files such as `__pycache__/`, `.DS_Store`, or logs.
@@ -97,8 +106,8 @@ This file is intended to compile on the Red Pitaya, not on the local machine.
 
 | Task | File |
 |------|------|
-| Adjust GUI layout or styling | `redpitaya_pulse_gui_c_helper.py` |
-| Change waveform preview behavior | `redpitaya_pulse_gui_c_helper.py` |
-| Change SSH / upload logic | `redpitaya_pulse_gui_c_helper.py` |
+| Adjust GUI layout or styling | `redpitaya_pulse_gui_qt.py` |
+| Change waveform preview behavior | `redpitaya_pulse_gui_qt.py` |
+| Change SSH / upload logic | `redpitaya_pulse_gui_qt.py`, `redpitaya_pulse_gui_c_helper.py` |
 | Change low-level register helper behavior | `rp_pulse_ctl.c` |
 | Update user documentation | `README.md` |

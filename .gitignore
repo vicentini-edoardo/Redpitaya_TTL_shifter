@@ -5,3 +5,4 @@ __pycache__/
 *.bit.bin
 .DS_Store
 gui.log
+.venv/

@@ -1,6 +1,8 @@
 # Red Pitaya Frequency Divider — Control GUI
 
-A Python/tkinter desktop GUI to control a custom frequency divider/pulse generator implemented on the Red Pitaya FPGA (STEMlab 125-14). The FPGA core measures the period of an external input signal, divides its frequency, and outputs a configurable pulse with controllable width and phase delay.
+A Python desktop GUI to control a custom frequency divider/pulse generator implemented on the Red Pitaya FPGA (STEMlab 125-14). The FPGA core measures the period of an external input signal, divides its frequency, and outputs a configurable pulse with controllable width and phase delay. It also supports a trigger-sampled phase modulation mode where the output delay follows a sinusoid over one full trigger period.
+
+The preferred GUI is now the PySide6 version in `redpitaya_pulse_gui_qt.py`. The original Tkinter app is still kept in the repository as a legacy fallback during the transition.
 
 ![GUI screenshot](GUI.png)
 
@@ -24,21 +26,24 @@ External signal ──► DIO0_P ──► [FPGA: freq divider + pulse gen] ─�
 
 | Offset | Register        | Description                                          |
 |--------|-----------------|------------------------------------------------------|
-| 0x00   | control         | Bit 0 = output enable, Bit 1 = soft reset            |
+| 0x00   | control         | Bit 0 = output enable, Bit 1 = soft reset, Bit 2 = phase modulation enable |
 | 0x04   | divider         | Frequency divider value (1–32)                       |
 | 0x08   | pulse width     | Pulse width in 125 MHz clock cycles                  |
 | 0x0C   | delay           | Pulse delay in 125 MHz clock cycles                  |
 | 0x10   | status          | Bit 0 = busy, Bit 1 = period_valid, Bit 2 = timeout  |
-| 0x14   | raw period      | Last raw measured input period (cycles)              |
-| 0x18   | filtered period | Filtered measured input period (cycles)              |
+| 0x14   | period          | Last raw measured input period (cycles)              |
+| 0x18   | period_avg      | Averaged trigger period (cycles)                     |
+| 0x1C   | phase_freq      | DDS phase increment word for modulation frequency    |
 
 Input frequency is measured directly from the hardware — no manual entry needed.
 Frequency from period: `freq_hz = 125_000_000 / period_cycles`
+Modulation word from frequency: `phase_freq_word = int(f_mod * 2**32 / 125e6)`
 
 ## Repository Contents
 
 | File | Description |
 |------|-------------|
+| `redpitaya_pulse_gui_qt.py` | Preferred PySide6 GUI — run on your PC |
 | `redpitaya_pulse_gui_c_helper.py` | Desktop GUI — run on your PC |
 | `rp_pulse_ctl.c` | C helper binary — compiled on the board via the GUI |
 | `red_pitaya_top.bit.bin` | FPGA bitfile — download from [Releases](../../releases) and place next to the GUI script |
@@ -46,7 +51,9 @@ Frequency from period: `freq_hz = 125_000_000 / period_cycles`
 ## Requirements
 
 **PC:**
-- Python 3 with `tkinter` (standard library, no pip install needed)
+- Python 3.10+
+- `PySide6-Essentials` for the preferred GUI
+- `tkinter` only if you want to run the legacy fallback GUI
 - OpenSSH client (`ssh`, `scp`)
 - macOS, Linux, or Windows with OpenSSH
 
@@ -62,19 +69,33 @@ Frequency from period: `freq_hz = 125_000_000 / period_cycles`
 
 Each Red Pitaya has a unique hostname printed on the board sticker, in the form `rp-XXXXXX.local`. You can also find it by scanning your network or connecting via the Red Pitaya web interface. Update the **Host** field in the GUI accordingly.
 
-### 2. Run the GUI
+### 2. Install the preferred GUI dependency
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install --upgrade pip
+.venv/bin/python -m pip install PySide6-Essentials
+```
+
+### 3. Run the GUI
+
+```bash
+.venv/bin/python redpitaya_pulse_gui_qt.py
+```
+
+Legacy fallback:
 
 ```bash
 python3 redpitaya_pulse_gui_c_helper.py
 ```
 
-### 3. First-time setup
+### 4. First-time setup
 
 If the C helper binary is not yet on the board, click **Upload & compile** — this copies `rp_pulse_ctl.c` via SCP and compiles it on the board with `gcc`.
 
 If the FPGA bitfile needs updating, click **Upload bitfile** — this copies `red_pitaya_top.bit.bin` via SCP and reloads the FPGA with `fpgautil`.
 
-### 4. Connect
+### 5. Connect
 
 Enter your board hostname and click **Connect**. This will:
 1. Load the FPGA bitfile via `fpgautil`
@@ -82,19 +103,23 @@ Enter your board hostname and click **Connect**. This will:
 
 Port, user, and base address can be changed under **▼ Advanced**.
 
-### 5. Control parameters
+### 6. Control parameters
 
 | Parameter | Unit | Description |
 |-----------|------|-------------|
 | Divider   | integer 1–32  | Divides the input frequency |
 | Width     | duty cycle 0–1 | Pulse width as fraction of the **input** period |
 | Delay     | phase 0–180°  | Pulse delay as phase of the **input** period |
+| Phase modulation | on/off | When enabled, delay is driven by an internal DDS-synthesized sinusoid |
+| Modulation frequency | Hz, 0–5 kHz | Converted to `PHASE_FREQ`; DIO2 outputs a 50% duty TTL at the same frequency |
 
 The muted label next to each slider shows the equivalent absolute time (e.g. `4 us`).
 
 The input frequency is read automatically from hardware and updated when it changes by more than 5%. Use **Force freq update** to apply the current hardware measurement immediately. A red warning is shown if no input signal is detected.
 
-### 6. Apply changes
+When phase modulation is active, the static `pulse_delay` register is ignored and the GUI greys out the delay control. If `period_valid = 0` or `timeout_flag = 1`, the GUI disables phase modulation and falls back to the static delay path.
+
+### 7. Apply changes
 
 | Button / control | Action |
 |-----------------|--------|
@@ -103,22 +128,33 @@ The input frequency is read automatically from hardware and updated when it chan
 | **Read registers** | Reads back hardware state without writing |
 | **Soft reset** | Pulses the reset bit on the FPGA core |
 
+Typical write order used by the GUI:
+1. Set divider, width, delay, and modulation frequency
+2. Write `PHASE_FREQ`
+3. Enable pulse output
+4. Enable phase modulation when trigger period is valid
+
 ## Architecture
 
+Preferred PySide6 app:
+
+```text
+redpitaya_pulse_gui_qt.py
+├── RemoteCtl                 SSH/SCP transport layer
+├── MainWindow                Qt dashboard composition + state
+├── CyberPanel                Custom painted section frame
+├── StatCard                  Live stat tile
+├── DividerControl            Stepped divider control
+├── ParameterSlider           Custom width/delay slider control
+├── WaveformPreview           Custom painted waveform preview
+└── FunctionWorker            QThreadPool job wrapper for async backend calls
 ```
+
+Legacy fallback:
+
+```text
 redpitaya_pulse_gui_c_helper.py
-├── RemoteCtl               SSH/SCP transport layer
-│   ├── run()               Execute a command on the board via SSH
-│   ├── helper()            Call rp_pulse_ctl and parse JSON response
-│   ├── upload_and_compile()  SCP rp_pulse_ctl.c + gcc on board
-│   └── upload_bitfile()    SCP bitfile + fpgautil reload
-└── App                     tkinter GUI
-    ├── _build_connection()   Connection panel + upload buttons
-    ├── _build_controls()     Divider / Width / Delay sliders
-    ├── _build_readback()     Register readback display
-    ├── _update_readback()    Parses hardware JSON, updates all labels
-    ├── _start_poll()         2 s periodic register poll
-    └── apply_now()           Converts GUI units → cycles → hardware write
+└── Original tkinter implementation
 ```
 
 **Unit conversions** (all referenced to the input period, not the divided period):
